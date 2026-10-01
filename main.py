@@ -65,7 +65,7 @@ def gemini(prompt):
                 if not r.ok:
                     print("Gemini error:", model, r.status_code, r.text[:200])
                     last = f"{model} {r.status_code}"
-                    time.sleep(5)
+                    time.sleep(2)
                     continue
                 return r.json()["candidates"][0]["content"]["parts"][0]["text"]
             except Exception as e:
@@ -76,16 +76,23 @@ def gemini(prompt):
     raise RuntimeError(f"Gemini failed: {last}")
 
 
-def gen_script():
+def gen_script(feedback=""):
     used = used_topics()[-80:]
+    extra = ""
+    if feedback:
+        extra = ("\nEarlier drafts were REJECTED by a fact-checker. Choose a different, simpler, "
+                 "safer fact and avoid these mistakes:" + feedback)
     prompt = f"""Write a YouTube Short script (English) about ONE mind-blowing, TRUE science fact (space, animals, or the human body).
 Do NOT repeat these earlier topics: {used}
 Rules:
+- Pick a simple, well-established fact with at most ONE clear number from a reliable source.
+- Do NOT do any arithmetic, unit conversions, or size/distance comparisons in the narration.
+- Do NOT claim things like "replaced every N years" or "X times more than Y".
+- No hype or superlative words such as ultimate, best, greatest, incredible, biggest, fastest, oldest.
 - 9 to 11 scenes. Total narration 60 to 75 words.
 - Scene 1 is a shocking question hook. Last scene invites viewers to follow for more facts.
 - Each scene text is 5 to 10 words, one idea, simple spoken English.
-- Be scientifically precise. No unqualified superlatives (biggest, fastest, oldest) unless exactly true; name the category. Real numbers only.
-- For each scene give "keywords": 2 to 3 concrete visual words good for a stock-video search (example: "humpback whale ocean"), and "image": a detailed visual prompt for an AI image generator (no text in the image).
+- For each scene give "keywords": 2 to 3 concrete visual words good for a stock-video search (example: "humpback whale ocean"), and "image": a detailed visual prompt for an AI image generator (no text in the image).{extra}
 Return ONLY JSON:
 {{"topic":"short topic name","title":"catchy accurate title under 60 characters","description":"two short lines then hashtags","tags":["tag1","tag2"],"scenes":[{{"text":"narration","keywords":"visual words","image":"image prompt"}}]}}"""
     data = json.loads(gemini(prompt))
@@ -429,15 +436,21 @@ def upload(path, meta):
 
 if __name__ == "__main__":
     meta = None
-    for attempt in range(3):
-        m = gen_script()
+    feedback = ""
+    for attempt in range(5):
+        try:
+            m = gen_script(feedback)
+        except Exception as e:
+            print("Script generation failed:", e)
+            continue
         ok, why = verify(m)
-        print(f"Topic: {m['topic']} | fact-check ok={ok} {why}")
+        print(f"Attempt {attempt + 1} | Topic: {m['topic']} | fact-check ok={ok} {why}")
         if ok:
             meta = m
             break
+        feedback += f"\n- Rejected topic '{m['topic']}': {why}"
     if meta is None:
-        raise SystemExit("Fact-check failed 3 times, skipping today")
+        raise SystemExit("Fact-check failed 5 times, skipping today")
     video = build_video(meta["scenes"])
     upload(video, meta)
     with open(USED, "a", encoding="utf-8") as f:
